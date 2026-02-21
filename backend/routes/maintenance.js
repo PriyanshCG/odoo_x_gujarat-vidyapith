@@ -19,7 +19,7 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
     try {
         const { vehicle_id, description, cost } = req.body;
-        
+
         // Create maintenance record
         const maintenance = new Maintenance({
             vehicle_id,
@@ -27,31 +27,36 @@ router.post('/', async (req, res) => {
             cost,
             service_date: new Date()
         });
-        
+
         await maintenance.save();
-        
+
         // Update vehicle status to 'In Shop'
         await Vehicle.findByIdAndUpdate(vehicle_id, { status: 'In Shop' });
-        
+
         res.status(201).json({
             success: true,
             maintenance,
             message: 'Vehicle marked as In Shop'
         });
-        
+
     } catch (error) {
         res.status(400).json({ error: error.message });
     }
 });
 
 // PUT complete maintenance
-router.put('/:vehicle_id/complete', async (req, res) => {
+router.put('/:id/complete', async (req, res) => {
     try {
-        await Vehicle.findByIdAndUpdate(
-            req.params.vehicle_id,
-            { status: 'Available' }
-        );
-        res.json({ success: true });
+        const maintenance = await Maintenance.findById(req.params.id);
+        if (!maintenance) return res.status(404).json({ error: 'Maintenance record not found' });
+
+        maintenance.status = 'Completed';
+        await maintenance.save();
+
+        // Update vehicle status to 'Available'
+        await Vehicle.findByIdAndUpdate(maintenance.vehicle_id, { status: 'Available' });
+
+        res.json({ success: true, maintenance });
     } catch (error) {
         res.status(400).json({ error: error.message });
     }
