@@ -3,6 +3,13 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
 
+const authRoutes = require('./routes/auth');
+const vehicleRoutes = require('./routes/vehicles');
+const driverRoutes = require('./routes/drivers');
+const tripRoutes = require('./routes/trips');
+const maintenanceRoutes = require('./routes/maintenance');
+const dashboardRoutes = require('./routes/dashboard');
+
 const app = express();
 
 app.use(cors());          
@@ -18,7 +25,26 @@ app.get('/api/test', (req, res) => {
     res.json({ message: 'FleetFlow backend is working!' });
 });
 
-const PORT = 5000;
+app.use('/api/auth', authRoutes);
+app.use('/api/vehicles', vehicleRoutes);
+app.use('/api/drivers', driverRoutes);
+app.use('/api/trips', tripRoutes);
+app.use('/api/maintenance', maintenanceRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`✅ Server running on http://localhost:${PORT}`);
+    console.log('\n📌 Available endpoints:');
+    console.log('   GET  /api/test');
+    console.log('   POST /api/auth/login');
+    console.log('   GET  /api/vehicles');
+    console.log('   POST /api/vehicles');
+    console.log('   GET  /api/drivers');
+    console.log('   POST /api/drivers');
+    console.log('   GET  /api/trips');
+    console.log('   POST /api/trips');
+    console.log('   GET  /api/maintenance');
+    console.log('   POST /api/maintenance');
+    console.log('   GET  /api/dashboard\n');
 });
