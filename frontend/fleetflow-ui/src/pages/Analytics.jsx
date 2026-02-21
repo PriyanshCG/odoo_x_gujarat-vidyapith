@@ -1,46 +1,112 @@
-import { useFleet } from '../context/FleetContext';
+import { useState, useEffect } from 'react';
+import vehicleService from '../services/vehicleService';
+import driverService from '../services/driverService';
+import tripService from '../services/tripService';
+import maintenanceService from '../services/maintenanceService';
+import fuelService from '../services/fuelService';
 
 export default function Analytics() {
-    const { vehicles, drivers, trips, maintenance, fuelLogs, vehicleTotalFuel, vehicleTotalMaintenance } = useFleet();
+    const [vehicles, setVehicles] = useState([]);
+    const [drivers, setDrivers] = useState([]);
+    const [trips, setTrips] = useState([]);
+    const [maintenance, setMaintenance] = useState([]);
+    const [fuelLogs, setFuelLogs] = useState([]);
+    const [loading, setLoading] = useState(true);
 
-    const completedTrips = trips.filter(t => t.state === 'completed');
+    useEffect(() => {
+        fetchData();
+    }, []);
+
+    const fetchData = async () => {
+        try {
+            const [vehiclesData, driversData, tripsData, maintenanceData, fuelData] = await Promise.all([
+                vehicleService.getAll(),
+                driverService.getAll(),
+                tripService.getAll(),
+                maintenanceService.getAll(),
+                fuelService.getAll()
+            ]);
+            setVehicles(vehiclesData);
+            setDrivers(driversData);
+            setTrips(tripsData);
+            setMaintenance(maintenanceData);
+            setFuelLogs(fuelData);
+        } catch (error) {
+            console.error('Error fetching analytics data:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const completedTrips = trips.filter(t => t.status === 'Completed');
 
     // Fuel efficiency: km / L per vehicle
     const fuelEfficiency = vehicles.map(v => {
-        const logs = fuelLogs.filter(f => f.vehicleId === v.id);
-        const totalLiters = logs.reduce((s, f) => s + f.liters, 0);
-        const vTrips = completedTrips.filter(t => t.vehicleId === v.id);
+        const vId = v._id || v.id;
+        const logs = fuelLogs.filter(f => f.vehicle_id === vId);
+        const totalLiters = logs.reduce((s, f) => s + (f.liters || 0), 0);
+        
+        const vTrips = completedTrips.filter(t => t.vehicle_id === vId);
         const totalKm = vTrips.reduce((s, t) => {
-            if (t.odometerStart && t.odometerEnd) return s + (t.odometerEnd - t.odometerStart);
+            if (t.odometer_end && t.odometer_start) {
+                return s + (t.odometer_end - t.odometer_start);
+            }
             return s;
         }, 0);
-        return { ...v, totalLiters, totalKm, efficiency: totalLiters > 0 ? (totalKm / totalLiters).toFixed(2) : 'N/A' };
+        
+        return { 
+            ...v, 
+            totalLiters, 
+            totalKm, 
+            efficiency: totalLiters > 0 ? (totalKm / totalLiters).toFixed(2) : 'N/A' 
+        };
     }).filter(v => v.totalLiters > 0);
 
-    // Vehicle ROI
+    // Helper to get vehicle fuel total
+    const vehicleTotalFuel = (vehicleId) => {
+        return fuelLogs
+            .filter(f => f.vehicle_id === vehicleId)
+            .reduce((s, f) => s + (f.cost || 0), 0);
+    };
+
+    // Helper to get vehicle maintenance total
+    const vehicleTotalMaintenance = (vehicleId) => {
+        return maintenance
+            .filter(m => m.vehicle_id === vehicleId)
+            .reduce((s, m) => s + (m.cost || 0), 0);
+    };
+
+    // Vehicle ROI (using mock revenue of $500 per trip)
     const vehicleROI = vehicles.map(v => {
-        const fuel = vehicleTotalFuel(v.id);
-        const maint = vehicleTotalMaintenance(v.id);
-        const revenue = completedTrips.filter(t => t.vehicleId === v.id).length * 500; // mock $500/trip
+        const vId = v._id || v.id;
+        const fuel = vehicleTotalFuel(vId);
+        const maint = vehicleTotalMaintenance(vId);
+        const revenue = completedTrips.filter(t => t.vehicle_id === vId).length * 500;
         const cost = fuel + maint;
-        const roi = v.acquisitionCost > 0 ? (((revenue - cost) / v.acquisitionCost) * 100).toFixed(1) : 'N/A';
+        const acquisitionCost = 50000; // Mock acquisition cost
+        const roi = acquisitionCost > 0 ? (((revenue - cost) / acquisitionCost) * 100).toFixed(1) : 'N/A';
         return { ...v, revenue, fuel, maint, cost, roi };
-    }).filter(v => v.acquisitionCost > 0);
+    }).filter(v => v.revenue > 0 || v.cost > 0);
 
     // Trip stats
     const tripCompletionRate = trips.length ? Math.round((completedTrips.length / trips.length) * 100) : 0;
-    const totalFuelSpend = fuelLogs.reduce((s, f) => s + f.cost, 0);
-    const totalMaintCost = maintenance.reduce((s, m) => s + m.cost, 0);
+    const totalFuelSpend = fuelLogs.reduce((s, f) => s + (f.cost || 0), 0);
+    const totalMaintCost = maintenance.reduce((s, m) => s + (m.cost || 0), 0);
 
-    // Driver performance table
+    // Driver performance
     const driverStats = drivers.map(d => {
-        const dTrips = trips.filter(t => t.driverId === d.id);
-        const done = dTrips.filter(t => t.state === 'completed').length;
+        const dId = d._id || d.id;
+        const dTrips = trips.filter(t => t.driver_id === dId);
+        const done = dTrips.filter(t => t.status === 'Completed').length;
         const rate = dTrips.length ? Math.round((done / dTrips.length) * 100) : 0;
         return { ...d, totalTrips: dTrips.length, completedTrips: done, completionRate: rate };
     });
 
     const maxEff = Math.max(...fuelEfficiency.map(v => Number(v.efficiency) || 0), 1);
+
+    if (loading) {
+        return <div className="loading">Loading analytics...</div>;
+    }
 
     return (
         <div className="fade-in">
@@ -50,8 +116,8 @@ export default function Analytics() {
                     <div className="page-sub">Operational insights and financial performance</div>
                 </div>
                 <div className="page-actions">
-                    <button className="btn btn-secondary" onClick={() => alert('CSV export coming in backend integration!')}>⬇ Export CSV</button>
-                    <button className="btn btn-secondary" onClick={() => alert('PDF export coming in backend integration!')}>⬇ Export PDF</button>
+                    <button className="btn btn-secondary" onClick={() => alert('CSV export coming soon!')}>⬇ Export CSV</button>
+                    <button className="btn btn-secondary" onClick={() => alert('PDF export coming soon!')}>⬇ Export PDF</button>
                 </div>
             </div>
 
@@ -95,7 +161,7 @@ export default function Analytics() {
                     ) : (
                         <div className="stat-bar-list">
                             {fuelEfficiency.sort((a, b) => Number(b.efficiency) - Number(a.efficiency)).map(v => (
-                                <div key={v.id} className="stat-bar-item">
+                                <div key={v._id || v.id} className="stat-bar-item">
                                     <div className="stat-bar-label">
                                         <span style={{ fontSize: 12 }}>{v.name}</span>
                                         <strong>{v.efficiency} km/L</strong>
@@ -118,12 +184,12 @@ export default function Analytics() {
                     {vehicleROI.length === 0 ? (
                         <div className="empty-state" style={{ padding: '20px 0' }}>
                             <div className="empty-state-icon">📊</div>
-                            <div className="empty-state-text">No acquisition cost data</div>
+                            <div className="empty-state-text">No trip data yet</div>
                         </div>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                             {vehicleROI.map(v => (
-                                <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
+                                <div key={v._id || v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
                                     <div>
                                         <div style={{ fontSize: 13, fontWeight: 600 }}>{v.name}</div>
                                         <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
@@ -156,15 +222,20 @@ export default function Analytics() {
                         </tr>
                     </thead>
                     <tbody>
-                        {driverStats.sort((a, b) => b.safetyScore - a.safetyScore).map(d => (
-                            <tr key={d.id}>
+                        {driverStats.sort((a, b) => b.safety_score - a.safety_score).map(d => (
+                            <tr key={d._id || d.id}>
                                 <td><strong>{d.name}</strong></td>
                                 <td>{d.totalTrips}</td>
                                 <td>{d.completedTrips}</td>
                                 <td>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                         <div style={{ width: 60, height: 6, background: 'var(--bg-hover)', borderRadius: 999, overflow: 'hidden' }}>
-                                            <div style={{ width: `${d.completionRate}%`, height: '100%', background: d.completionRate > 80 ? 'var(--green-t)' : 'var(--orange-t)', borderRadius: 999 }} />
+                                            <div style={{ 
+                                                width: `${d.completionRate}%`, 
+                                                height: '100%', 
+                                                background: d.completionRate > 80 ? 'var(--green-t)' : 'var(--orange-t)', 
+                                                borderRadius: 999 
+                                            }} />
                                         </div>
                                         <span style={{ fontSize: 12 }}>{d.completionRate}%</span>
                                     </div>
@@ -172,18 +243,23 @@ export default function Analytics() {
                                 <td>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                         <div style={{ width: 60, height: 6, background: 'var(--bg-hover)', borderRadius: 999, overflow: 'hidden' }}>
-                                            <div style={{ width: `${d.safetyScore}%`, height: '100%', background: d.safetyScore > 80 ? 'var(--green-t)' : d.safetyScore > 60 ? 'var(--orange-t)' : 'var(--red-t)', borderRadius: 999 }} />
+                                            <div style={{ 
+                                                width: `${d.safety_score}%`, 
+                                                height: '100%', 
+                                                background: d.safety_score > 80 ? 'var(--green-t)' : d.safety_score > 60 ? 'var(--orange-t)' : 'var(--red-t)', 
+                                                borderRadius: 999 
+                                            }} />
                                         </div>
-                                        <span style={{ fontSize: 12 }}>{d.safetyScore}</span>
+                                        <span style={{ fontSize: 12 }}>{d.safety_score}</span>
                                     </div>
                                 </td>
                                 <td>
                                     <span style={{
                                         fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 999,
-                                        background: new Date(d.licenseExpiry) < new Date() ? 'var(--red-bg)' : 'var(--green-bg)',
-                                        color: new Date(d.licenseExpiry) < new Date() ? 'var(--red-t)' : 'var(--green-t)',
+                                        background: new Date(d.license_expiry) < new Date() ? 'var(--red-bg)' : 'var(--green-bg)',
+                                        color: new Date(d.license_expiry) < new Date() ? 'var(--red-t)' : 'var(--green-t)',
                                     }}>
-                                        {new Date(d.licenseExpiry) < new Date() ? 'Expired' : 'Valid'}
+                                        {new Date(d.license_expiry) < new Date() ? 'Expired' : 'Valid'}
                                     </span>
                                 </td>
                             </tr>

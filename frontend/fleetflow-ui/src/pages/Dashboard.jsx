@@ -1,26 +1,89 @@
-import { useFleet } from '../context/FleetContext';
-import StatusBadge from '../components/StatusBadge';
+import { useState, useEffect } from 'react';
+import StatusBadge from '@/components/StatusBadge';
 import { useNavigate } from 'react-router-dom';
+import vehicleService from '../services/vehicleService';
+import driverService from '../services/driverService';
+import tripService from '../services/tripService';
+import maintenanceService from '../services/maintenanceService';
 
 export default function Dashboard() {
-    const { vehicles, drivers, trips, maintenance } = useFleet();
+    const [vehicles, setVehicles] = useState([]);
+    const [drivers, setDrivers] = useState([]);
+    const [trips, setTrips] = useState([]);
+    const [maintenance, setMaintenance] = useState([]);
+    const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
 
-    const activeFleet = vehicles.filter((v) => v.status === 'on_trip').length;
-    const inShop = vehicles.filter((v) => v.status === 'in_shop').length;
-    const available = vehicles.filter((v) => v.status === 'available').length;
-    const totalActive = vehicles.filter((v) => v.status !== 'retired').length;
-    const utilization = totalActive ? Math.round(((totalActive - available) / totalActive) * 100) : 0;
-    const pendingCargo = trips.filter((t) => t.state === 'draft').length;
-    const openMaint = maintenance.filter((m) => m.state !== 'done').length;
+    useEffect(() => {
+        fetchDashboardData();
+    }, []);
 
-    const recentTrips = [...trips].sort((a, b) => b.id - a.id).slice(0, 5);
-    const alertDrivers = drivers.filter((d) => {
-        const exp = new Date(d.licenseExpiry);
+    const fetchDashboardData = async () => {
+        try {
+            const [vehiclesData, driversData, tripsData, maintenanceData] = await Promise.all([
+                vehicleService.getAll(),
+                driverService.getAll(),
+                tripService.getAll(),
+                maintenanceService.getAll()
+            ]);
+            setVehicles(vehiclesData);
+            setDrivers(driversData);
+            setTrips(tripsData);
+            setMaintenance(maintenanceData);
+        } catch (error) {
+            console.error('Error fetching dashboard data:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Calculate KPIs
+    const activeFleet = vehicles.filter(v => v.status === 'On Trip').length;
+    const inShop = vehicles.filter(v => v.status === 'In Shop').length;
+    const available = vehicles.filter(v => v.status === 'Available').length;
+    const totalActive = vehicles.filter(v => v.status !== 'Out of Service').length;
+    const utilization = totalActive ? Math.round(((totalActive - available) / totalActive) * 100) : 0;
+    const pendingCargo = trips.filter(t => t.status === 'Draft').length;
+    const openMaint = maintenance.filter(m => {
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        return new Date(m.service_date) > thirtyDaysAgo;
+    }).length;
+
+    // Get recent trips
+    const recentTrips = [...trips]
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, 5);
+
+    // Get drivers with expiring licenses (next 30 days)
+    const alertDrivers = drivers.filter(d => {
+        const exp = new Date(d.license_expiry);
         const soon = new Date();
         soon.setDate(soon.getDate() + 30);
         return exp < soon;
     });
+
+    // Helper to get vehicle name
+    const getVehicleName = (idOrObj) => {
+        if (!idOrObj) return 'Unknown';
+        if (typeof idOrObj === 'object' && idOrObj.name) return idOrObj.name;
+        const idStr = String(typeof idOrObj === 'object' ? (idOrObj._id || idOrObj.id) : idOrObj);
+        const v = vehicles.find(v => String(v._id || v.id) === idStr);
+        return v ? v.name : `Vehicle #${idStr.slice(-6)}`;
+    };
+
+    // Helper to get driver name
+    const getDriverName = (idOrObj) => {
+        if (!idOrObj) return 'Unknown';
+        if (typeof idOrObj === 'object' && idOrObj.name) return idOrObj.name;
+        const idStr = String(typeof idOrObj === 'object' ? (idOrObj._id || idOrObj.id) : idOrObj);
+        const d = drivers.find(d => String(d._id || d.id) === idStr);
+        return d ? d.name : `Driver #${idStr.slice(-6)}`;
+    };
+
+    if (loading) {
+        return <div className="loading">Loading dashboard...</div>;
+    }
 
     return (
         <div className="fade-in">
@@ -36,7 +99,7 @@ export default function Dashboard() {
                     <div className="kpi-icon">🔧</div>
                     <div className="kpi-label">Maintenance Alerts</div>
                     <div className="kpi-value">{inShop}</div>
-                    <div className="kpi-sub">{openMaint} open service records</div>
+                    <div className="kpi-sub">{openMaint} recent service records</div>
                 </div>
                 <div className="kpi-card green">
                     <div className="kpi-icon">📈</div>
@@ -60,10 +123,10 @@ export default function Dashboard() {
                     <div className="stat-card-title">Fleet Status Overview</div>
                     <div className="stat-bar-list">
                         {[
-                            { label: 'Available', count: available, color: 'var(--green-t)', total: totalActive },
-                            { label: 'On Trip', count: activeFleet, color: 'var(--blue-t)', total: totalActive },
-                            { label: 'In Shop', count: inShop, color: 'var(--orange-t)', total: totalActive },
-                            { label: 'Retired', count: vehicles.filter(v => v.status === 'retired').length, color: 'var(--gray-t)', total: vehicles.length },
+                            { label: 'Available', count: available, color: 'var(--green-t)', total: vehicles.length },
+                            { label: 'On Trip', count: activeFleet, color: 'var(--blue-t)', total: vehicles.length },
+                            { label: 'In Shop', count: inShop, color: 'var(--orange-t)', total: vehicles.length },
+                            { label: 'Out of Service', count: vehicles.filter(v => v.status === 'Out of Service').length, color: 'var(--red-t)', total: vehicles.length },
                         ].map((item) => (
                             <div key={item.label} className="stat-bar-item">
                                 <div className="stat-bar-label">
@@ -101,13 +164,13 @@ export default function Dashboard() {
                         </div>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            {alertDrivers.map((d) => {
-                                const expired = new Date(d.licenseExpiry) < new Date();
+                            {alertDrivers.slice(0, 5).map((d) => {
+                                const expired = new Date(d.license_expiry) < new Date();
                                 return (
-                                    <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
+                                    <div key={d._id || d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border-light)' }}>
                                         <div>
                                             <div style={{ fontSize: 13, fontWeight: 600 }}>{d.name}</div>
-                                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Expires: {d.licenseExpiry}</div>
+                                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Expires: {new Date(d.license_expiry).toLocaleDateString()}</div>
                                         </div>
                                         <StatusBadge status={expired ? 'expired' : 'scheduled'} />
                                     </div>
@@ -127,7 +190,7 @@ export default function Dashboard() {
                 <table className="data-table">
                     <thead>
                         <tr>
-                            <th>Reference</th>
+                            <th>ID</th>
                             <th>Route</th>
                             <th>Driver</th>
                             <th>Cargo</th>
@@ -135,13 +198,15 @@ export default function Dashboard() {
                         </tr>
                     </thead>
                     <tbody>
-                        {recentTrips.map((t) => (
-                            <tr key={t.id}>
-                                <td className="font-mono">{t.reference}</td>
-                                <td>{t.origin} → {t.destination}</td>
-                                <td className="text-secondary">Driver #{t.driverId}</td>
-                                <td>{t.cargoWeight} kg</td>
-                                <td><StatusBadge status={t.state} /></td>
+                        {recentTrips.length === 0 ? (
+                            <tr><td colSpan={5}><div className="empty-state"><div className="empty-state-icon">🚚</div><div className="empty-state-text">No recent trips</div></div></td></tr>
+                        ) : recentTrips.map((t) => (
+                            <tr key={t._id || t.id}>
+                                <td className="font-mono">#{String(t._id || t.id).slice(-6)}</td>
+                                <td>{t.start_location || '?'} → {t.end_location || '?'}</td>
+                                <td className="text-secondary">{getDriverName(t.driver_id)}</td>
+                                <td>{t.cargo_weight} kg</td>
+                                <td><StatusBadge status={t.status} /></td>
                             </tr>
                         ))}
                     </tbody>
